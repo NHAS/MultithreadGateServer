@@ -21,7 +21,7 @@
 using namespace std;
 
 int ser_port;
-char *portname = "/dev/ttyACM0"; 
+const string portname = "/dev/ttyACM0"; 
 int set_interface_attribs (int ser_port, int speed, int parity)
 {
         struct termios tty;
@@ -68,10 +68,10 @@ int set_interface_attribs (int ser_port, int speed, int parity)
  
 int open_serial()
 {
-   ser_port = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
+   ser_port = open (portname.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
    if (ser_port < 0)
    {
-     printf("error %d opening %s: %s", errno, portname, strerror (errno));
+     printf("error %d opening %s: %s", errno, portname.c_str(), strerror (errno));
      return -1;
    }
 
@@ -114,6 +114,7 @@ class GateController {
     const string key = "123456";
 
     std::mutex gate_operations_lock;
+    bool gate_state = false;
     void open_gate() {cout << "\topening gate" << endl; write_serial('o');}
     void close_gate() {cout << "\tclosing gate" << endl; write_serial('c');}
 
@@ -126,10 +127,10 @@ class GateController {
             close(socketfd);
             return;
          }
-	  cout << "\tPI opening message: " << string(message, n) << endl;
+	  cout << "\tPI first message: " << string(message, n) << endl;
 
-         if(string(message, n).find("Please") != string::npos) { // they sent something
-             n = write(socketfd, key.c_str(), key.size());
+         if(string(message, n).find("Please") != string::npos) { // they sent something containing 'Please'
+             n = write(socketfd, key.c_str(), key.size()); // Give them the key
              if (n < 0) {
                 cout << "Error writing to socket: " << socketfd << endl;
                 close(socketfd);
@@ -137,9 +138,9 @@ class GateController {
              }
 
              for(int i = 0; i < bufferLength; i++)
-                    message[i] = '\0';
+                    message[i] = '\0'; // Zero out message buffer
        
-             n = read(socketfd, message, bufferLength);
+             n = read(socketfd, message, bufferLength); // Get the response password from the pi
              if (n < 0) {
                 cout << "Error reading from socket: " << socketfd << endl;
                 close(socketfd);
@@ -150,10 +151,14 @@ class GateController {
              if(string(message).find( string(key) ) != string::npos){
                 close(socketfd);
                 gate_operations_lock.lock();
-
-                open_gate();
-		  std::this_thread::sleep_for(4s);
-                close_gate();
+		
+		if(!gate_state) { // If the gate isnt open
+                	open_gate();
+		  		std::this_thread::sleep_for(4s);
+                	close_gate();
+		} else {
+			cout << "\tGate already open." << endl;
+		}
 
                 gate_operations_lock.unlock();
              }
