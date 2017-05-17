@@ -149,21 +149,30 @@ class GateController {
              
 	     cout << "\tPI sent password: " << string(message) << endl;
              if(string(message).find( string(key) ) != string::npos){
-                close(socketfd);
-                gate_operations_lock.lock();
+                close(socketfd); // The pie has sent the right key in there. Just end their connection so they can continue.
 		
-		if(!gate_state) { // If the gate isnt open
-                	open_gate();
-			gate_state = true;
+		gate_operations_lock.lock();	
+		
+		if(gate_state) {
+			cout << "\tGate is already open" << endl;
 			gate_operations_lock.unlock();
-		  		std::this_thread::sleep_for(4s);
-                	close_gate();
-			gate_state = false;
-		} else {
-			cout << "\tGate already open." << endl;
+			return;
 		}
 
-                gate_operations_lock.unlock();
+		//The gate is closed. Open it
+                open_gate();
+		gate_state = true;
+		gate_operations_lock.unlock();
+		
+			std::this_thread::sleep_for(4s);
+		
+		gate_operations_lock.lock();
+		
+			close_gate();
+			gate_state = false;
+		
+		gate_operations_lock.unlock();
+
              }
          } else {
             cout << "\tDidnt say \"Please\"!" << endl;
