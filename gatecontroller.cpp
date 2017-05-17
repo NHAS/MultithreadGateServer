@@ -154,8 +154,11 @@ class GateController {
 		
 		if(!gate_state) { // If the gate isnt open
                 	open_gate();
+			gate_state = true;
+			gate_operations_lock.unlock();
 		  		std::this_thread::sleep_for(4s);
                 	close_gate();
+			gate_state = false;
 		} else {
 			cout << "\tGate already open." << endl;
 		}
