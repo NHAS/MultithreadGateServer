@@ -10,7 +10,89 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>    /* File control definitions */
+#include <errno.h>    /* Error number definitions */
+#include <termios.h>  /* POSIX terminal control definitions */
+#include <stdint.h>   /* definitions of 8&16 bits ints*/
+#include <sys/signal.h>  /* serial port uses interrupt*/
+#include <stdlib.h>
+#include <sys/ioctl.h>
+
 using namespace std;
+
+int ser_port;
+char *portname = "/dev/ttyACM0"; 
+int set_interface_attribs (int ser_port, int speed, int parity)
+{
+        struct termios tty;
+        memset (&tty, 0, sizeof tty);
+        if (tcgetattr (ser_port, &tty) != 0)
+        {
+
+          printf("error %d from tcgetattr", errno);
+          return -1;
+        }
+
+        cfsetospeed (&tty, speed);
+        cfsetispeed (&tty, speed);
+
+        tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+        // disable IGNBRK for mismatched speed tests; otherwise receive break
+        // as \000 chars
+        tty.c_iflag &= ~IGNBRK;         // ignore break signal
+        tty.c_lflag = 0;                // no signaling chars, no echo,
+                                        // no canonical processing
+        tty.c_oflag = 0;                // no remapping, no delays
+        tty.c_cc[VMIN]  = 0;            // read doesn't block
+        tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+        tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+        tty.c_cflag |= (CLOCAL | CREAD);    // ignore modem controls,
+                                            // enable reading
+        tty.c_cflag &= ~(PARENB | PARODD);    // shut off parity
+        tty.c_cflag |= parity;
+        tty.c_cflag &= ~CSTOPB;
+        tty.c_cflag &= ~CRTSCTS;
+
+        if (tcsetattr (ser_port, TCSANOW, &tty) != 0)
+        {
+           printf("error %d from tcsetattr", errno);
+           return -1;
+        }
+        return 0;
+}
+
+
+
+ 
+int open_serial()
+{
+   ser_port = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
+   if (ser_port < 0)
+   {
+     printf("error %d opening %s: %s", errno, portname, strerror (errno));
+     return -1;
+   }
+
+   set_interface_attribs (ser_port, B9600, 0);  // set speed to 9600 bps, 8n1 (no parity)
+   sleep(2); //required to make flush work, for some reason http://stackoverflow.com/questions/13013387/clearing-the-serial-ports-buffer
+   tcflush(ser_port,TCIOFLUSH); // does not work anyway - buffer filled with 0s, read blocking
+   
+   return 1;
+}
+
+
+int write_serial(char c)
+{
+   int n_bytes = write(ser_port,&c,1);
+   if (n_bytes!=1)
+   {
+      return -1;
+   }
+   return 1;
+}
+
 
 void error(const char *msg)
 {
@@ -32,8 +114,8 @@ class GateController {
     const string key = "123456";
 
     std::mutex gate_operations_lock;
-    void open_gate() {cout << "opening gate" << endl;}
-    void close_gate() {cout << "closing gate" << endl;}
+    void open_gate() {cout << "\topening gate" << endl; write_serial('o');}
+    void close_gate() {cout << "\tclosing gate" << endl; write_serial('c');}
 
 
     void password_challenge(int socketfd) {
@@ -44,9 +126,9 @@ class GateController {
             close(socketfd);
             return;
          }
-        cout << "Got data: " << string(message, n) << endl;
+	  cout << "\tPI opening message: " << string(message, n) << endl;
 
-         if(string(message, n) == "Please\n") { // They match
+         if(string(message, n).find("Please") != string::npos) { // they sent something
              n = write(socketfd, key.c_str(), key.size());
              if (n < 0) {
                 cout << "Error writing to socket: " << socketfd << endl;
@@ -55,30 +137,28 @@ class GateController {
              }
 
              for(int i = 0; i < bufferLength; i++)
-                    message[i] = 0;
-
-             cout << "Ping" << endl;
+                    message[i] = '\0';
+       
              n = read(socketfd, message, bufferLength);
-             cout << "Ping2" << endl;
              if (n < 0) {
                 cout << "Error reading from socket: " << socketfd << endl;
                 close(socketfd);
                 return;
              }
-             cout << "Ping1" << endl;
-
-             if(string(message) == string(key+"Please\n")) {
+             
+	     cout << "\tPI sent password: " << string(message) << endl;
+             if(string(message).find( string(key) ) != string::npos){
                 close(socketfd);
                 gate_operations_lock.lock();
 
                 open_gate();
-                std::this_thread::sleep_for(4s);
+		  std::this_thread::sleep_for(4s);
                 close_gate();
 
                 gate_operations_lock.unlock();
              }
          } else {
-            cout << "Failed to say please" << endl;
+            cout << "\tDidnt say \"Please\"!" << endl;
          }
 
          close(socketfd);
@@ -89,6 +169,9 @@ class GateController {
     GateController(int port) {
             int sockfd, newsockfd;
             socklen_t clilen;
+	   
+	    open_serial();
+	    write_serial('c'); //Close gate
 
             struct sockaddr_in serv_addr, cli_addr;
 
