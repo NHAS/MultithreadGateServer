@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,104 +21,22 @@
 
 using namespace std;
 
-int ser_port;
-const string portname = "/dev/ttyACM0"; 
-int set_interface_attribs (int ser_port, int speed, int parity)
-{
-        struct termios tty;
-        memset (&tty, 0, sizeof tty);
-        if (tcgetattr (ser_port, &tty) != 0)
-        {
-
-          printf("error %d from tcgetattr", errno);
-          return -1;
-        }
-
-        cfsetospeed (&tty, speed);
-        cfsetispeed (&tty, speed);
-
-        tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
-        // disable IGNBRK for mismatched speed tests; otherwise receive break
-        // as \000 chars
-        tty.c_iflag &= ~IGNBRK;         // ignore break signal
-        tty.c_lflag = 0;                // no signaling chars, no echo,
-                                        // no canonical processing
-        tty.c_oflag = 0;                // no remapping, no delays
-        tty.c_cc[VMIN]  = 0;            // read doesn't block
-        tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
-
-        tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
-
-        tty.c_cflag |= (CLOCAL | CREAD);    // ignore modem controls,
-                                            // enable reading
-        tty.c_cflag &= ~(PARENB | PARODD);    // shut off parity
-        tty.c_cflag |= parity;
-        tty.c_cflag &= ~CSTOPB;
-        tty.c_cflag &= ~CRTSCTS;
-
-        if (tcsetattr (ser_port, TCSANOW, &tty) != 0)
-        {
-           printf("error %d from tcsetattr", errno);
-           return -1;
-        }
-        return 0;
-}
-
-
-
- 
-int open_serial()
-{
-   ser_port = open (portname.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
-   if (ser_port < 0)
-   {
-     printf("error %d opening %s: %s", errno, portname.c_str(), strerror (errno));
-     return -1;
-   }
-
-   set_interface_attribs (ser_port, B9600, 0);  // set speed to 9600 bps, 8n1 (no parity)
-   sleep(2); //required to make flush work, for some reason http://stackoverflow.com/questions/13013387/clearing-the-serial-ports-buffer
-   tcflush(ser_port,TCIOFLUSH); // does not work anyway - buffer filled with 0s, read blocking
-   
-   return 1;
-}
-
-
-int write_serial(char c)
-{
-   int n_bytes = write(ser_port,&c,1);
-   if (n_bytes!=1)
-   {
-      return -1;
-   }
-   return 1;
-}
-
-
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
-
-bool done = false;
-
-void finish(int sig) {
-    done = true;
-    cout << "\nFinishing up" << endl;
-     exit(0);
-}
+void signal_handler(int sig);
 
 class GateController {
 
     const size_t bufferLength = 24;
+    bool done = false;
+    int ser_port;
     const string key = "123456";
+	const string portname = "/dev/ttyACM0"; 
+	
 
     std::mutex gate_operations_lock;
     bool gate_state = false;
+    
     void open_gate() {cout << "\topening gate" << endl; write_serial('o');}
     void close_gate() {cout << "\tclosing gate" << endl; write_serial('c');}
-
 
     void password_challenge(int socketfd) {
          char message[bufferLength] = {'\0'};
@@ -181,61 +100,147 @@ class GateController {
          close(socketfd);
     }
 
-    public:
+	int set_interface_attribs (int ser_port, int speed, int parity)
+	{
+			struct termios tty;
+			memset (&tty, 0, sizeof tty);
+			if (tcgetattr (ser_port, &tty) != 0)
+			{
+			  cout << "Error "<< errno << " from tcgetattr." << endl;
+			  return -1;
+			}
 
-    GateController(int port) {
-            int sockfd, newsockfd;
-            socklen_t clilen;
+			cfsetospeed (&tty, speed);
+			cfsetispeed (&tty, speed);
+
+			tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+			// disable IGNBRK for mismatched speed tests; otherwise receive break
+			// as \000 chars
+			tty.c_iflag &= ~IGNBRK;         // ignore break signal
+			tty.c_lflag = 0;                // no signaling chars, no echo,
+											// no canonical processing
+			tty.c_oflag = 0;                // no remapping, no delays
+			tty.c_cc[VMIN]  = 0;            // read doesn't block
+			tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+			tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+			tty.c_cflag |= (CLOCAL | CREAD);    // ignore modem controls,
+												// enable reading
+			tty.c_cflag &= ~(PARENB | PARODD);    // shut off parity
+			tty.c_cflag |= parity;
+			tty.c_cflag &= ~CSTOPB;
+			tty.c_cflag &= ~CRTSCTS;
+
+			if (tcsetattr (ser_port, TCSANOW, &tty) != 0)
+			{
+			  cout << "Error " << errno <<" from tcsetattr." << endl;
+			   return -1;
+			}
+			return 0;
+	}
+
+
+	int open_serial()
+	{
+	   ser_port = open (portname.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
+	   if (ser_port < 0)
+	   {
+		 cout << "Error " << errno << " opening " <<  portname.c_str() << ": "<<  portname.c_str()<< endl;
+		 return -1;
+	   }
+
+	   set_interface_attribs (ser_port, B9600, 0);  // set speed to 9600 bps, 8n1 (no parity)
+	   sleep(2); //required to make flush work, for some reason http://stackoverflow.com/questions/13013387/clearing-the-serial-ports-buffer
+	   tcflush(ser_port,TCIOFLUSH); // does not work anyway - buffer filled with 0s, read blocking
+	   
+	   return 1;
+	}
+
+
+	int write_serial(char c)
+	{
+	   int n_bytes = write(ser_port,&c,1);
+	   if (n_bytes!=1)
+	   {
+		  return -1;
+	   }
+	   return 1;
+	}
+
+    public:
+    
+    void start(int port) {
+    
 	   
 	    open_serial();
 	    write_serial('c'); //Close gate
+	    
+	   
+		 signal(2, signal_handler);
+        
 
-            struct sockaddr_in serv_addr, cli_addr;
+         int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+         if (sockfd < 0)
+               perror("ERROR creating server listening socket");
 
-            sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            if (sockfd < 0)
-                error("ERROR opening socket");
-
-            int optval = 1;
-            if (setsockopt(sockfd, SOL_SOCKET,SO_REUSEADDR, &optval, sizeof optval) != 0)
-                error("setsockopt") ;
+         int optval = 1;
+         if (setsockopt(sockfd, SOL_SOCKET,SO_REUSEADDR, &optval, sizeof optval) != 0)
+                perror("setsockopt encountered and error") ;
 
 
+		struct sockaddr_in serv_addr, cli_addr;
+		
+         bzero((char *) &serv_addr, sizeof(serv_addr));
 
-            bzero((char *) &serv_addr, sizeof(serv_addr));
+         serv_addr.sin_family = AF_INET;
+         serv_addr.sin_addr.s_addr = INADDR_ANY;
+         serv_addr.sin_port = htons(port);
+         if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+                perror("ERROR on binding server socket");
 
-            serv_addr.sin_family = AF_INET;
-            serv_addr.sin_addr.s_addr = INADDR_ANY;
-            serv_addr.sin_port = htons(port);
-            if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
-                error("ERROR on binding");
+         listen(sockfd, 5);
 
-            listen(sockfd, 5);
-
-            while(!done) {
-                clilen = sizeof(cli_addr);
-                newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+         while(!done) {
+                socklen_t clilen = sizeof(cli_addr);
+                int newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
                 if (newsockfd < 0)
-                    error("ERROR on accept");
+                    perror("ERROR on accepting new connection");
                 else {
-                    cout << "Accepted a socket" << endl;
+					
+					if(cli_addr.sin_family == AF_INET) {
+						cout << "Accepted new connection, ip: " << inet_ntoa(cli_addr.sin_addr) << endl; 
+					} else {
+						cout << "Accepted new connection." << endl;
+					}
+					
                     std::thread ChallengeThread(&GateController::password_challenge, this, newsockfd);
                     ChallengeThread.detach();
                 }
-
 
             }
 
             close(sockfd);
         }
+        
+        
+	void finish() {
+		done = true;
+		cout << "\nFinishing up" << endl;
+			exit(0);
+	}
 
 };
 
+GateController Controller; // Has to be defined globally so signal handling can work for clean shutdown
+
+void signal_handler(int sig) {
+		Controller.finish();
+}
 
 
 int main()
-{
-    signal(2, finish);
-    GateController NewController(1024);
+{	
+	Controller.start(1024);
     return 0;
 }
