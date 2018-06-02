@@ -67,7 +67,7 @@ class GateController {
              }
              
 	     cout << "\tPI sent password: " << string(message) << endl;
-             if(string(message).find( string(key) ) != string::npos){
+             if(string(message).find( key ) != string::npos){
                 close(socketfd); // The pie has sent the right key in there. Just end their connection so they can continue.
 		
 		gate_operations_lock.lock();	
@@ -231,7 +231,7 @@ class GateController {
 	void finish() {
 		done = true;
 		cout << "\nFinishing up" << endl;
-			//exit(0);
+			exit(0);
 	}
 
 };
