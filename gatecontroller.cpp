@@ -163,6 +163,8 @@ class GateController {
 	   int n_bytes = write(ser_port,&c,1);
 	   if (n_bytes!=1)
 	   {
+		  cout << "Writing to serial port stopped working. Please restart this program." << endl;
+		  raise(SIGINT);
 		  return -1;
 	   }
 	   return 1;
@@ -171,9 +173,11 @@ class GateController {
     public:
     
     void start(int port) {
-    
-	   
-	    open_serial();
+
+	    if(open_serial() != 1) {
+			raise(SIGINT);
+		}
+
 	    write_serial('c'); //Close gate
 	    
 	   
@@ -227,7 +231,7 @@ class GateController {
 	void finish() {
 		done = true;
 		cout << "\nFinishing up" << endl;
-			exit(0);
+			//exit(0);
 	}
 
 };
